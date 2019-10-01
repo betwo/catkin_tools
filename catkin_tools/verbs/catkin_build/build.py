@@ -21,15 +21,17 @@ import sys
 import time
 import traceback
 import yaml
+import threading
+import re
 
 import trollius as asyncio
 
 try:
     # Python3
-    from queue import Queue
+    from queue import Queue, Empty
 except ImportError:
     # Python2
-    from Queue import Queue
+    from Queue import Queue, Empty
 
 try:
     from catkin_pkg.packages import find_packages
@@ -53,6 +55,7 @@ from catkin_tools.common import log
 from catkin_tools.common import wide_log
 
 from catkin_tools.execution.controllers import ConsoleStatusController
+from catkin_tools.execution.influxdb_controller import InfluxDBStatusController, have_influx_db
 from catkin_tools.execution.executor import execute_jobs
 from catkin_tools.execution.executor import run_until_complete
 
@@ -182,7 +185,9 @@ def build_isolated_workspace(
     no_notify=False,
     continue_on_failure=False,
     summarize_build=None,
-    relaxed_constraints=False
+    relaxed_constraints=False,
+    influx_url=None,
+    influx_db=None
 ):
     """Builds a catkin workspace in isolation
 
@@ -225,6 +230,10 @@ def build_isolated_workspace(
     :type summarize_build: bool
     :param relaxed_constraints If true, do not use exec_deps for topological ordering
     :type relaxed_constraints bool
+    :param influx_url Url to access an InfluxDB instance
+    :type influx_url string Url of the form user:password@host:port
+    :param influx_db Database name in InfluxDB
+    :type influx_db string
 
     :raises: SystemExit if buildspace is a file or no packages were found in the source space
         or if the provided options are invalid
@@ -534,6 +543,27 @@ def build_isolated_workspace(
     # Queue for communicating status
     event_queue = Queue()
 
+    status_queue = Queue()
+    monitoring_queue = Queue()
+
+    class ForwardingQueue(threading.Thread):
+        def __init__(self, queues):
+            super(ForwardingQueue, self).__init__()
+            self.keep_running = True
+            self.queues = queues
+
+        def run(self):
+            while self.keep_running:
+                event = event_queue.get(True)
+                for queue in self.queues:
+                    queue.put(event)
+                if event is None:
+                    break
+
+    queue_thread = ForwardingQueue([status_queue, monitoring_queue])
+
+    threads = [queue_thread]
+
     try:
         # Spin up status output thread
         status_thread = ConsoleStatusController(
@@ -544,7 +574,7 @@ def build_isolated_workspace(
             [pkg.name for _, pkg in context.packages],
             [p for p in context.whitelist],
             [p for p in context.blacklist],
-            event_queue,
+            status_queue,
             show_notifications=not no_notify,
             show_active_status=not no_status,
             show_buffered_stdout=not quiet and not interleave_output,
@@ -555,7 +585,28 @@ def build_isolated_workspace(
             show_full_summary=(summarize_build is True),
             pre_start_time=pre_start_time,
             active_status_rate=limit_status_rate)
-        status_thread.start()
+        threads.append(status_thread)
+
+        if influx_db is not None:
+            if not have_influx_db:
+                sys.exit(
+                    "[build] @!@{rf}Error:@| InfluxDB monitoring is not possible, cannot import influxdb")
+
+            match = re.match('^(.+):(.+)@(.+):(.+)$', influx_url)
+            if not match:
+                sys.exit(
+                    "[build] @!@{rf}Error:@| The value of --influx has to be of the form username:password@host:port")
+            username, password, host, port = match.groups()
+
+            influxdb_thread = InfluxDBStatusController(
+                monitoring_queue,
+                influx_db,
+                host, port, username, password)
+
+            threads.append(influxdb_thread)
+
+        for thread in threads:
+            thread.start()
 
         # Initialize locks
         locks = {
@@ -575,12 +626,17 @@ def build_isolated_workspace(
                 continue_without_deps=False,
                 relaxed_constraints=relaxed_constraints))
         except Exception:
-            status_thread.keep_running = False
             all_succeeded = False
-            status_thread.join(1.0)
+            for thread in threads:
+                thread.keep_running = False
+            for thread in threads:
+                thread.join(1.0)
             wide_log(str(traceback.format_exc()))
 
-        status_thread.join(1.0)
+        event_queue.put(None)
+
+        for thread in threads:
+            thread.join(1.0)
 
         # Warn user about new packages
         now_built_packages, now_unbuilt_pkgs = get_built_unbuilt_packages(context, workspace_packages)

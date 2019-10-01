@@ -177,6 +177,10 @@ the --save-config argument. To see the current config, use the
     add('--mem-limit', default=None, help=argparse.SUPPRESS)
     add('--relaxed_constraints', action='store_true', default=None,
         help='Do not interpret <exec_depend>s as <build_depends> for greater parallism')
+    add('--influx', default=None,
+        help='InfluxDB credentials and url (username:password@host:port)')
+    add('--influxdb', default=None,
+        help='InfluxDB database name')
 
     # Advanced args
     add('--develdebug', metavar='LEVEL', default=None, help=argparse.SUPPRESS)
@@ -422,7 +426,9 @@ def main(opts):
             no_notify=opts.no_notify,
             continue_on_failure=opts.continue_on_failure,
             summarize_build=opts.summarize,  # Can be True, False, or None
-            relaxed_constraints=opts.relaxed_constraints
+            relaxed_constraints=opts.relaxed_constraints,
+            influx_url=opts.influx,
+            influx_db=opts.influxdb
         )
     except CommandMissing as e:
         sys.exit(clr("[build] @!@{rf}Error:@| {0}").format(e))
