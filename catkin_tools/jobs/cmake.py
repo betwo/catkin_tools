@@ -209,7 +209,7 @@ def generate_setup_file(logger, event_queue, context, install_target):
     return 0
 
 
-def create_cmake_build_job(context, package, package_path, dependencies, force_cmake, pre_clean):
+def create_cmake_build_job(context, package, package_path, build_dependencies, run_dependencies, force_cmake, pre_clean):
 
     # Package source space path
     pkg_dir = os.path.join(context.source_space_abs, package_path)
@@ -338,7 +338,8 @@ def create_cmake_build_job(context, package, package_path, dependencies, force_c
 
     return Job(
         jid=package.name,
-        deps=dependencies,
+        build_deps=build_dependencies,
+        run_deps=run_dependencies,
         env=job_env,
         stages=stages)
 
@@ -400,7 +401,8 @@ def create_cmake_clean_job(
 
     return Job(
         jid=package.name,
-        deps=dependencies,
+        build_deps=dependencies,
+        run_deps=[],
         env=job_env,
         stages=stages)
 

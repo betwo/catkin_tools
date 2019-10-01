@@ -191,7 +191,8 @@ def execute_jobs(
         log_path,
         max_toplevel_jobs=None,
         continue_on_failure=False,
-        continue_without_deps=False):
+        continue_without_deps=False,
+        relaxed_constraints=False) :
     """Process a number of jobs asynchronously.
 
     :param jobs: A list of topologically-sorted Jobs with no circular dependencies.
@@ -225,7 +226,7 @@ def execute_jobs(
     threadpool = ThreadPoolExecutor(max_workers=job_server.max_jobs())
 
     # Immediately abandon jobs with bad dependencies
-    pending_jobs, new_abandoned_jobs = split(jobs, lambda j: all([d in job_map for d in j.deps]))
+    pending_jobs, new_abandoned_jobs = split(jobs, lambda j: all([d in job_map for d in j.build_deps]))
 
     for abandoned_job in new_abandoned_jobs:
         abandoned_jobs.append(abandoned_job)
@@ -233,10 +234,10 @@ def execute_jobs(
             'ABANDONED_JOB',
             job_id=abandoned_job.jid,
             reason='MISSING_DEPS',
-            dep_ids=[d for d in abandoned_job.deps if d not in job_map]))
+            dep_ids=[d for d in abandoned_job.all_deps if d not in job_map]))
 
     # Initialize list of ready and pending jobs (jobs not ready to be executed)
-    queued_jobs, pending_jobs = split(pending_jobs, lambda j: len(j.deps) == 0)
+    queued_jobs, pending_jobs = split(pending_jobs, lambda j: len(j.build_deps) == 0)
 
     # Process all jobs asynchronously until there are none left
     while len(active_job_fs) + len(queued_jobs) + len(pending_jobs) > 0:
@@ -323,7 +324,7 @@ def execute_jobs(
                         # Abandon all pending jobs which depend on this job_id
                         unhandled_abandoned_jobs, pending_jobs = split(
                             pending_jobs,
-                            lambda j: abandoned_job_id in j.deps)
+                            lambda j: abandoned_job_id in j.build_deps)
 
                         # Handle each new abandoned job
                         for abandoned_job in unhandled_abandoned_jobs:
@@ -343,7 +344,8 @@ def execute_jobs(
             # Update the list of ready jobs (based on completed job dependencies)
             new_queued_jobs, pending_jobs = split(
                 pending_jobs,
-                lambda j: j.all_deps_completed(completed_jobs))
+                lambda j: j.all_build_deps_completed(completed_jobs) if relaxed_constraints
+                else j.all_deps_completed(completed_jobs))
             queued_jobs.extend(new_queued_jobs)
 
             # Notify of newly queued jobs

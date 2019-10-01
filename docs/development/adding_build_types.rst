@@ -61,6 +61,7 @@ The signature of the factory callable should be similar to the following:
         # Create and return new build Job
         return Job(
             jid=package.name,
-            deps=dependencies,
+            build_deps=build_dependencies,
+            run_deps=run_dependencies,
             stages=stages)
 

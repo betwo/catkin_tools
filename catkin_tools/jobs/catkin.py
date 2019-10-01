@@ -357,7 +357,7 @@ def ctr_nuke(logger, event_queue, prefix):
     return 0
 
 
-def create_catkin_build_job(context, package, package_path, dependencies, force_cmake, pre_clean, prebuild=False):
+def create_catkin_build_job(context, package, package_path, build_dependencies, run_dependencies, force_cmake, pre_clean, prebuild=False):
     """Job class for building catkin packages"""
 
     # Package source space path
@@ -515,7 +515,8 @@ def create_catkin_build_job(context, package, package_path, dependencies, force_
 
     return Job(
         jid=package.name,
-        deps=dependencies,
+        build_deps=build_dependencies,
+        run_deps=run_dependencies,
         env=job_env,
         stages=stages)
 
@@ -605,7 +606,8 @@ def create_catkin_clean_job(
 
     return Job(
         jid=package.name,
-        deps=dependencies,
+        build_deps=dependencies,
+        run_deps=[],
         env=job_env,
         stages=stages)
 

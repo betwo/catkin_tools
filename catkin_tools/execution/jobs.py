@@ -24,7 +24,7 @@ class Job(object):
 
     """A Job is a series of operations, each of which is considered a "stage" of the job."""
 
-    def __init__(self, jid, deps, env, stages, continue_on_failure=True):
+    def __init__(self, jid, build_deps, run_deps, env, stages, continue_on_failure=True):
         """
         jid: Unique job identifier
         deps: Dependencies (in terms of other jid's)
@@ -32,19 +32,25 @@ class Job(object):
 
         """
         self.jid = jid
-        self.deps = deps
+        self.build_deps = build_deps
+        self.run_deps = [dep for dep in run_deps if dep not in build_deps]
+        self.all_deps = build_deps + run_deps
         self.env = env
         self.stages = stages
         self.continue_on_failure = continue_on_failure
 
     def all_deps_completed(self, completed_jobs):
         """Return True if all dependencies have been completed."""
-        return all([dep_id in completed_jobs for dep_id in self.deps])
+        return all([dep_id in completed_jobs for dep_id in self.all_deps])
+
+    def all_build_deps_completed(self, completed_jobs):
+        """Return True if all dependencies have been completed."""
+        return all([dep_id in completed_jobs for dep_id in self.build_deps])
 
     def all_deps_succeeded(self, completed_jobs):
         """Return True if all dependencies have been completed and succeeded."""
-        return all([completed_jobs.get(dep_id, False) for dep_id in self.deps])
+        return all([completed_jobs.get(dep_id, False) for dep_id in self.all_deps])
 
     def any_deps_failed(self, completed_jobs):
         """Return True if any dependencies which have been completed have failed."""
-        return any([not completed_jobs.get(dep_id, True) for dep_id in self.deps])
+        return any([not completed_jobs.get(dep_id, True) for dep_id in self.all_deps])

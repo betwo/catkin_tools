@@ -46,7 +46,9 @@ from catkin_tools.common import FakeLock
 from catkin_tools.common import format_time_delta
 from catkin_tools.common import get_build_type
 from catkin_tools.common import get_cached_recursive_build_depends_in_workspace
+from catkin_tools.common import get_cached_recursive_run_depends_in_workspace
 from catkin_tools.common import get_recursive_run_depends_in_workspace
+from catkin_tools.common import get_recursive_build_depends_for_run_depends_in_workspace
 from catkin_tools.common import log
 from catkin_tools.common import wide_log
 
@@ -110,8 +112,10 @@ def determine_packages_to_be_built(packages, context, workspace_packages):
             if package.name in packages:
                 packages_to_be_built.append((pkg_path, package))
                 # Get the recursive dependencies for each of these packages
-                pkg_deps = get_cached_recursive_build_depends_in_workspace(package, ordered_packages)
-                packages_to_be_built_deps.extend(pkg_deps)
+                pkg_build_deps = get_cached_recursive_build_depends_in_workspace(package, ordered_packages)
+                packages_to_be_built_deps.extend(pkg_build_deps)
+                pkg_run_deps = get_cached_recursive_run_depends_in_workspace(package, ordered_packages)
+                packages_to_be_built_deps.extend(pkg_run_deps)
     else:
         # Only use whitelist when no other packages are specified
         if len(context.whitelist) > 0:
@@ -178,6 +182,7 @@ def build_isolated_workspace(
     no_notify=False,
     continue_on_failure=False,
     summarize_build=None,
+    relaxed_constraints=False
 ):
     """Builds a catkin workspace in isolation
 
@@ -218,6 +223,8 @@ def build_isolated_workspace(
     :param summarize_build: if True summarizes the build at the end, if None and continue_on_failure is True and the
         the build fails, then the build will be summarized, but if False it never will be summarized.
     :type summarize_build: bool
+    :param relaxed_constraints If true, do not use exec_deps for topological ordering
+    :type relaxed_constraints bool
 
     :raises: SystemExit if buildspace is a file or no packages were found in the source space
         or if the provided options are invalid
@@ -326,7 +333,7 @@ def build_isolated_workspace(
         start_with,
         packages,
         all_packages,
-        packages_to_be_built + packages_to_be_built_deps)
+        packages_to_be_built)
 
     # Populate .catkin file if we're not installing
     # NOTE: This is done to avoid the Catkin CMake code from doing it,
@@ -435,7 +442,8 @@ def build_isolated_workspace(
                 context,
                 prebuild_pkg,
                 prebuild_pkg_path,
-                dependencies=prebuild_pkg_deps,
+                build_dependencies=prebuild_pkg_deps,
+                run_dependencies=[],
                 force_cmake=force_cmake,
                 pre_clean=pre_clean,
                 prebuild=True)
@@ -471,22 +479,40 @@ def build_isolated_workspace(
             continue
 
         # Get actual execution deps
-        deps = [
+        build_deps = [
             p.name for _, p
             in get_cached_recursive_build_depends_in_workspace(pkg, packages_to_be_built)
             if p.name not in prebuild_jobs
         ]
+        build_for_run_deps = [
+            p.name for _, p
+            in get_cached_recursive_run_depends_in_workspace(pkg, packages_to_be_built)
+            if p.name not in prebuild_jobs
+        ]
+
         # All jobs depend on the prebuild jobs if they're defined
         if not no_deps:
+            if relaxed_constraints:
+                build_for_run_deps = [
+                    p.name for _, p
+                    in get_recursive_build_depends_for_run_depends_in_workspace([pkg], packages_to_be_built)
+                    if p.name not in prebuild_jobs
+                ]
+            else:
+                # revert to interpreting all dependencies as build dependencies
+                build_deps = list(set(build_deps + build_for_run_deps))
+                build_for_run_deps = []
+
             for j in prebuild_jobs.values():
-                deps.append(j.jid)
+                build_deps.append(j.jid)
 
         # Determine the job parameters
         build_job_kwargs = dict(
             context=context,
             package=pkg,
             package_path=pkg_path,
-            dependencies=deps,
+            build_dependencies=build_deps,
+            run_dependencies=build_for_run_deps,
             force_cmake=force_cmake,
             pre_clean=pre_clean)
 
@@ -546,7 +572,8 @@ def build_isolated_workspace(
                 context.log_space_abs,
                 max_toplevel_jobs=n_jobs,
                 continue_on_failure=continue_on_failure,
-                continue_without_deps=False))
+                continue_without_deps=False,
+                relaxed_constraints=relaxed_constraints))
         except Exception:
             status_thread.keep_running = False
             all_succeeded = False
